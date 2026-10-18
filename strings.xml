@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">GRID</string>
+    <string name="tracking_channel">Active trip</string>
+    <string name="tracking_channel_description">Persistent notification while a journey is recorded</string>
+</resources>

@@ -1,0 +1,88 @@
+name: Android CI and APK
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.13'
+      - name: Test and build actual Android APK
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          MAPTILER_KEY: ${{ vars.MAPTILER_KEY }}
+        run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Upload installable debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GRID-debug-${{ github.sha }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+  signed-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: debug
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.13'
+      - name: Signed release (keys must be configured)
+        env:
+          GRID_KEYSTORE_BASE64: ${{ secrets.GRID_KEYSTORE_BASE64 }}
+          GRID_KEYSTORE_PASSWORD: ${{ secrets.GRID_KEYSTORE_PASSWORD }}
+          GRID_KEY_ALIAS: ${{ secrets.GRID_KEY_ALIAS }}
+          GRID_KEY_PASSWORD: ${{ secrets.GRID_KEY_PASSWORD }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          MAPTILER_KEY: ${{ vars.MAPTILER_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GRID_KEYSTORE_BASE64" || -z "$GRID_KEYSTORE_PASSWORD" || -z "$GRID_KEY_ALIAS" || -z "$GRID_KEY_PASSWORD" ]]; then
+            echo 'Signing secrets missing. Tag build cannot publish an unsigned release.' >&2
+            exit 1
+          fi
+          printf '%s' "$GRID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/grid-release.jks"
+          export GRID_KEYSTORE_PATH="$RUNNER_TEMP/grid-release.jks"
+          gradle --no-daemon :app:assembleRelease
+          mkdir -p release
+          cp app/build/outputs/apk/release/app-release.apk "release/GRID-${GITHUB_REF_NAME}.apk"
+          rm -f "$RUNNER_TEMP/grid-release.jks"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GRID-signed-${{ github.ref_name }}
+          path: release/*.apk
+          if-no-files-found: error
+      - name: Publish tagged release APK
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.apk
+          generate_release_notes: true

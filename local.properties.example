@@ -1,0 +1,5 @@
+# Android Studio writes sdk.dir automatically. Do not commit local.properties.
+# Optional public, scoped client configuration (never a service_role key):
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+MAPTILER_KEY=

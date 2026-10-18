@@ -1,0 +1,58 @@
+name: GRID iOS checks
+on:
+  push:
+    paths:
+      - 'ios/**'
+      - 'GRID-iOS-ready-for-GitHub.zip'
+      - '.github/workflows/ios.yml'
+  pull_request:
+    paths:
+      - 'ios/**'
+      - 'GRID-iOS-ready-for-GitHub.zip'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+jobs:
+  ios-simulator:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack source archive (for one-file GitHub upload)
+        run: |
+          if [ ! -f ios/project.yml ]; then
+            test -f GRID-iOS-ready-for-GitHub.zip || { echo "iOS source folder/archive missing"; exit 1; }
+            unzip -q GRID-iOS-ready-for-GitHub.zip
+          fi
+          test -f ios/GRID/GRIDApp.swift
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: cd ios && xcodegen generate
+      - name: Check simulator build (no paid signing needed)
+        run: |
+          xcodebuild -project ios/GRID.xcodeproj -scheme GRID \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
+      - name: Check unit tests
+        run: |
+          SIM_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next((x["udid"] for xs in d.values() for x in xs if x.get("isAvailable") and x["name"].startswith("iPhone")), ""))')
+          if [ -z "$SIM_ID" ]; then echo "No available iPhone simulator installed"; exit 1; fi
+          xcodebuild -project ios/GRID.xcodeproj -scheme GRID \
+            -destination "platform=iOS Simulator,id=$SIM_ID" \
+            CODE_SIGNING_ALLOWED=NO test
+      - name: Build unsigned iPhone IPA for free personal signing
+        run: |
+          xcodebuild -project ios/GRID.xcodeproj -scheme GRID \
+            -configuration Debug -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/GRID-device" \
+            CODE_SIGNING_ALLOWED=NO build
+          mkdir -p "$RUNNER_TEMP/GRID-ipa/Payload"
+          cp -R "$RUNNER_TEMP/GRID-device/Build/Products/Debug-iphoneos/GRID.app" \
+            "$RUNNER_TEMP/GRID-ipa/Payload/GRID.app"
+          cd "$RUNNER_TEMP/GRID-ipa"
+          zip -qr "$GITHUB_WORKSPACE/GRID-unsigned.ipa" Payload
+      - name: Upload unsigned IPA (requires signing to install)
+        uses: actions/upload-artifact@v4
+        with:
+          name: GRID-iOS-unsigned-IPA
+          path: GRID-unsigned.ipa
+          if-no-files-found: error
